@@ -1,0 +1,7 @@
+.claude/
+tmp_*
+*.csv
+*.xlsx
+*.docx
+*.pdf
+*.zip

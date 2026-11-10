@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>שיתוף מסך</title>
+<meta name="robots" content="noindex">
+<style>
+  :root{
+    --bg:#f6f4f0; --card:#ffffff; --line:#e3dfd8; --text:#2b2a27; --muted:#6f6a62;
+    --accent:#4a5f7a; --accent-h:#3c4e65; --ok:#3f7a52; --warn:#9a6b1f; --danger:#8d3b3b;
+    --r:4px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Arial,sans-serif;font-size:16px;line-height:1.5}
+  .wrap{max-width:720px;margin:0 auto;padding:24px 16px 48px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:20px}
+  h1{font-size:22px;font-weight:600;margin:0}
+  .sub{color:var(--muted);font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin-bottom:16px}
+  .card h2{font-size:17px;font-weight:600;margin:0 0 10px}
+  p{margin:0 0 10px}
+  ul.plain{margin:0 0 14px;padding-inline-start:18px;color:var(--muted);font-size:15px}
+  ul.plain li{margin-bottom:4px}
+  .btn{appearance:none;border:1px solid var(--line);background:#fff;color:var(--text);padding:10px 16px;border-radius:var(--r);font-size:15px;cursor:pointer;font-family:inherit}
+  .btn:hover{background:#faf8f5}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-h)}
+  .btn.danger{color:var(--danger);border-color:#d9c3c3}
+  .btn.danger:hover{background:#fbf3f3}
+  .btn.small{padding:6px 12px;font-size:14px}
+  .btn:disabled{opacity:.55;cursor:default}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .status{display:flex;align-items:center;gap:8px;font-size:15px}
+  .dot{width:9px;height:9px;border-radius:50%;background:#bbb;flex:none}
+  .dot.live{background:var(--ok);box-shadow:0 0 0 3px #dcebdf}
+  .dot.wait{background:var(--warn)}
+  .dot.off{background:var(--danger)}
+  .linkbox{display:flex;gap:8px;align-items:stretch;margin:12px 0}
+  .linkbox input{flex:1;min-width:0;border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;font-size:14px;direction:ltr;text-align:left;background:#faf8f5;color:var(--text);font-family:Consolas,monospace}
+  video{width:100%;background:#1d1c1a;border-radius:var(--r);display:block}
+  #hostPreview{max-height:220px;object-fit:contain;border:1px solid var(--line)}
+  .viewers{border-top:1px solid var(--line);margin-top:16px;padding-top:12px}
+  .viewer{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);margin-bottom:8px;background:#fcfbf9}
+  .viewer .name{font-weight:600}
+  .viewer .meta{color:var(--muted);font-size:13px}
+  .viewer.pending{border-color:#e4d3b3;background:#fdf9f1}
+  .empty{color:var(--muted);font-size:14px}
+  .msg{padding:12px 14px;border-radius:var(--r);border:1px solid var(--line);background:#fff;font-size:15px;margin-bottom:12px}
+  .msg.err{border-color:#d9c3c3;background:#fbf3f3;color:var(--danger)}
+  .msg.warn{border-color:#e4d3b3;background:#fdf9f1;color:var(--warn)}
+  label{display:block;font-size:14px;color:var(--muted);margin-bottom:6px}
+  input.text{width:100%;border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;font-size:16px;font-family:inherit;background:#fff;color:var(--text)}
+  .hidden{display:none !important}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+  footer{color:var(--muted);font-size:13px;margin-top:24px;border-top:1px solid var(--line);padding-top:12px}
+  @media (max-width:480px){ .wrap{padding:16px 12px 40px} header{flex-direction:column;gap:2px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>שיתוף מסך</h1>
+  <span class="sub" id="subTitle">צפייה בלבד · נפסק כשסוגרים את הדף</span>
+</header>
+
+<!-- ========== HOST ========== -->
+<section id="host" class="hidden">
+
+  <div class="card" id="hostIdle">
+    <h2>שיתוף המסך שלך</h2>
+    <ul class="plain">
+      <li>לוחצים "התחל שיתוף" ובוחרים מסך, חלון או טאב.</li>
+      <li>מקבלים קישור חד-פעמי ושולחים אותו למי שצריך.</li>
+      <li>כל צופה צריך אישור שלך לפני שהוא רואה משהו.</li>
+      <li>עוצרים בכל רגע. הקישור מת מיד.</li>
+    </ul>
+    <div id="hostMsg" class="msg err hidden"></div>
+    <button class="btn primary" id="btnStart">התחל שיתוף</button>
+  </div>
+
+  <div class="card hidden" id="hostActive">
+    <div class="topbar">
+      <div class="status"><span class="dot live"></span><span id="hostStatus">משתף עכשיו</span></div>
+      <button class="btn danger small" id="btnStop">עצור שיתוף</button>
+    </div>
+
+    <label>קישור לצפייה (חד-פעמי, תקף רק כל עוד השיתוף פעיל)</label>
+    <div class="linkbox">
+      <input type="text" id="shareLink" readonly onclick="this.select()">
+      <button class="btn" id="btnCopy">העתק</button>
+      <a class="btn" id="btnWa" target="_blank" rel="noopener">וואטסאפ</a>
+    </div>
+
+    <video id="hostPreview" autoplay muted playsinline></video>
+
+    <div class="viewers">
+      <div class="topbar"><strong id="viewersTitle">צופים</strong><span class="sub" id="viewersCount"></span></div>
+      <div id="viewersList"><div class="empty">עדיין אין צופים. כשמישהו יפתח את הקישור, הבקשה תופיע כאן.</div></div>
+    </div>
+  </div>
+
+</section>
+
+<!-- ========== VIEWER ========== -->
+<section id="viewer" class="hidden">
+
+  <div class="card" id="viewerJoin">
+    <h2>הוזמנת לצפות במסך</h2>
+    <p class="sub">הכנס את שמך כדי שהמשתף יידע מי מבקש לצפות.</p>
+    <label for="viewerName">השם שלך</label>
+    <input class="text" id="viewerName" maxlength="40" autocomplete="name">
+    <div class="row" style="margin-top:12px">
+      <button class="btn primary" id="btnJoin">התחבר</button>
+    </div>
+  </div>
+
+  <div id="viewerMsg" class="msg hidden"></div>
+
+  <div class="card hidden" id="viewerLive">
+    <div class="topbar">
+      <div class="status"><span class="dot live"></span><span>מחובר</span></div>
+      <button class="btn small" id="btnFull">מסך מלא</button>
+    </div>
+    <video id="viewerVideo" autoplay playsinline controls></video>
+  </div>
+
+</section>
+
+<footer>
+  הצופה רואה בלבד ואינו יכול לשלוט במחשב. הווידאו עובר מוצפן ישירות בין המחשבים.
+</footer>
+</div>
+
+<script src="vendor/peerjs.min.js"></script>
+<script>
+(function(){
+  'use strict';
+
+  var PREFIX = 'ss-';
+  var ICE = { iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'turn:openrelay.metered.ca:80',  username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turns:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
+  ]};
+
+  function $(id){ return document.getElementById(id); }
+  function show(el){ el.classList.remove('hidden'); }
+  function hide(el){ el.classList.add('hidden'); }
+  function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  function randomCode(n){
+    var chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+    var out = '', buf = new Uint32Array(n);
+    crypto.getRandomValues(buf);
+    for (var i = 0; i < n; i++) out += chars[buf[i] % chars.length];
+    return out;
+  }
+
+  function newPeer(id){
+    return new Peer(id, { config: ICE, debug: 1 });
+  }
+
+  var code = (location.hash || '').replace(/^#/, '').trim();
+  if (/^[a-z0-9]{8,20}$/.test(code)) initViewer(code); else initHost();
+
+  /* ================= HOST ================= */
+  function initHost(){
+    show($('host'));
+    var peer = null, stream = null;
+    var viewers = {}; // peerId -> {conn, call, name, approved, el}
+
+    $('btnStart').addEventListener('click', startShare);
+    $('btnStop').addEventListener('click', stopShare);
+    $('btnCopy').addEventListener('click', function(){
+      var inp = $('shareLink');
+      var done = function(){ $('btnCopy').textContent = 'הועתק'; setTimeout(function(){ $('btnCopy').textContent = 'העתק'; }, 1500); };
+      if (navigator.clipboard) navigator.clipboard.writeText(inp.value).then(done, function(){ inp.select(); document.execCommand('copy'); done(); });
+      else { inp.select(); document.execCommand('copy'); done(); }
+    });
+    window.addEventListener('beforeunload', function(){ if (peer) stopShare(); });
+
+    function hostError(txt){ var m = $('hostMsg'); m.textContent = txt; show(m); }
+
+    async function startShare(){
+      hide($('hostMsg'));
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){
+        hostError('הדפדפן הזה לא תומך בשיתוף מסך. השתמש ב-Chrome או Edge במחשב.');
+        return;
+      }
+      $('btnStart').disabled = true;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: 'always', frameRate: 15 }, audio: false });
+      } catch (e) {
+        $('btnStart').disabled = false;
+        if (e && e.name === 'NotAllowedError') return; // user cancelled the picker
+        hostError('לא ניתן להתחיל שיתוף: ' + (e && e.message || e));
+        return;
+      }
+      stream.getVideoTracks()[0].addEventListener('ended', stopShare);
+      $('hostPreview').srcObject = stream;
+
+      var c = randomCode(10);
+      peer = newPeer(PREFIX + c);
+
+      peer.on('open', function(){
+        var link = location.origin + location.pathname + '#' + c;
+        $('shareLink').value = link;
+        $('btnWa').href = 'https://wa.me/?text=' + encodeURIComponent('קישור לצפייה במסך שלי: ' + link);
+        hide($('hostIdle')); show($('hostActive'));
+        renderViewers();
+      });
+
+      peer.on('connection', function(conn){
+        conn.on('data', function(msg){
+          if (!msg || msg.type !== 'hello') return;
+          if (viewers[conn.peer]) return;
+          var name = String(msg.name || '').trim().slice(0, 40) || 'צופה ללא שם';
+          viewers[conn.peer] = { conn: conn, call: null, name: name, approved: false, at: new Date() };
+          renderViewers();
+          try { if (navigator.vibrate) navigator.vibrate(100); } catch(_){}
+        });
+        conn.on('close', function(){ removeViewer(conn.peer); });
+        conn.on('error', function(){ removeViewer(conn.peer); });
+      });
+
+      peer.on('disconnected', function(){ if (peer && !peer.destroyed) peer.reconnect(); });
+      peer.on('error', function(err){
+        if (err.type === 'unavailable-id') { hostError('תקלה ביצירת קוד, נסה שוב.'); cleanup(); return; }
+        if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
+          hostError('אין חיבור לשרת התיווך. בדוק את החיבור לאינטרנט ונסה שוב.'); cleanup(); return;
+        }
+        console.warn('peer error', err);
+      });
+    }
+
+    function approve(id){
+      var v = viewers[id]; if (!v || !stream || !peer) return;
+      v.approved = true;
+      try { v.conn.send({ type: 'approved' }); } catch(_){}
+      v.call = peer.call(id, stream);
+      if (v.call){
+        v.call.on('close', function(){ removeViewer(id); });
+        v.call.on('error', function(){ removeViewer(id); });
+      }
+      renderViewers();
+    }
+
+    function deny(id){
+      var v = viewers[id]; if (!v) return;
+      try { v.conn.send({ type: 'denied' }); } catch(_){}
+      setTimeout(function(){ try { v.conn.close(); } catch(_){} }, 300);
+      delete viewers[id];
+      renderViewers();
+    }
+
+    function kick(id){
+      var v = viewers[id]; if (!v) return;
+      try { v.conn.send({ type: 'ended' }); } catch(_){}
+      setTimeout(function(){
+        try { if (v.call) v.call.close(); } catch(_){}
+        try { v.conn.close(); } catch(_){}
+      }, 300);
+      delete viewers[id];
+      renderViewers();
+    }
+
+    function removeViewer(id){
+      if (!viewers[id]) return;
+      delete viewers[id];
+      renderViewers();
+    }
+
+    function renderViewers(){
+      var list = $('viewersList'); list.innerHTML = '';
+      var ids = Object.keys(viewers);
+      var pending = ids.filter(function(i){ return !viewers[i].approved; });
+      var live = ids.filter(function(i){ return viewers[i].approved; });
+      $('viewersCount').textContent = live.length ? (live.length === 1 ? 'צופה אחד מחובר' : live.length + ' צופים מחוברים') : '';
+      if (!ids.length){
+        list.innerHTML = '<div class="empty">עדיין אין צופים. כשמישהו יפתח את הקישור, הבקשה תופיע כאן.</div>';
+        return;
+      }
+      pending.concat(live).forEach(function(id){
+        var v = viewers[id];
+        var el = document.createElement('div');
+        el.className = 'viewer' + (v.approved ? '' : ' pending');
+        var time = v.at.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+        el.innerHTML =
+          '<div><div class="name">' + esc(v.name) + '</div>' +
+          '<div class="meta">' + (v.approved ? 'צופה מ-' + time : 'מבקש לצפות · ' + time) + '</div></div>' +
+          '<div class="row"></div>';
+        var btns = el.querySelector('.row');
+        if (!v.approved){
+          var ok = document.createElement('button'); ok.className = 'btn primary small'; ok.textContent = 'אשר';
+          ok.onclick = function(){ approve(id); };
+          var no = document.createElement('button'); no.className = 'btn small'; no.textContent = 'דחה';
+          no.onclick = function(){ deny(id); };
+          btns.appendChild(ok); btns.appendChild(no);
+        } else {
+          var k = document.createElement('button'); k.className = 'btn danger small'; k.textContent = 'נתק';
+          k.onclick = function(){ kick(id); };
+          btns.appendChild(k);
+        }
+        list.appendChild(el);
+      });
+    }
+
+    function cleanup(){
+      if (stream){ stream.getTracks().forEach(function(t){ try { t.stop(); } catch(_){} }); stream = null; }
+      if (peer){ try { peer.destroy(); } catch(_){} peer = null; }
+      viewers = {};
+      $('hostPreview').srcObject = null;
+      $('shareLink').value = '';
+      hide($('hostActive')); show($('hostIdle'));
+      $('btnStart').disabled = false;
+    }
+
+    function stopShare(){
+      Object.keys(viewers).forEach(function(id){
+        var v = viewers[id];
+        try { v.conn.send({ type: 'ended' }); } catch(_){}
+        try { if (v.call) v.call.close(); } catch(_){}
+      });
+      // give the "ended" message a moment to go out before destroying the peer
+      var p = peer, s = stream;
+      peer = null; stream = null;
+      if (s) s.getTracks().forEach(function(t){ try { t.stop(); } catch(_){} });
+      setTimeout(function(){ try { if (p) p.destroy(); } catch(_){} }, 300);
+      viewers = {};
+      $('hostPreview').srcObject = null;
+      $('shareLink').value = '';
+      hide($('hostActive')); show($('hostIdle'));
+      $('btnStart').disabled = false;
+    }
+  }
+
+  /* ================= VIEWER ================= */
+  function initViewer(code){
+    show($('viewer'));
+    $('subTitle').textContent = 'צפייה בלבד';
+    var nameInp = $('viewerName');
+    try { nameInp.value = localStorage.getItem('ss_name') || ''; } catch(_){}
+    var peer = null, call = null, ended = false;
+
+    function msg(txt, cls){ var m = $('viewerMsg'); m.textContent = txt; m.className = 'msg' + (cls ? ' ' + cls : ''); show(m); }
+
+    $('btnJoin').addEventListener('click', join);
+    nameInp.addEventListener('keydown', function(e){ if (e.key === 'Enter') join(); });
+    $('btnFull').addEventListener('click', function(){
+      var v = $('viewerVideo');
+      if (v.requestFullscreen) v.requestFullscreen(); else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+    });
+
+    function join(){
+      var name = nameInp.value.trim();
+      if (!name){ nameInp.focus(); return; }
+      try { localStorage.setItem('ss_name', name); } catch(_){}
+      $('btnJoin').disabled = true;
+      hide($('viewerJoin'));
+      msg('מתחבר...', 'warn');
+
+      peer = newPeer(undefined);
+      peer.on('open', function(){
+        var conn = peer.connect(PREFIX + code, { reliable: true });
+        conn.on('open', function(){
+          conn.send({ type: 'hello', name: name });
+          msg('הבקשה נשלחה. ממתין לאישור המשתף...', 'warn');
+        });
+        conn.on('data', function(m){
+          if (!m) return;
+          if (m.type === 'approved') msg('אושר. מתחבר לווידאו...', 'warn');
+          else if (m.type === 'denied') finish('הבקשה לצפות נדחתה.', 'err');
+          else if (m.type === 'ended') finish('השיתוף הסתיים.');
+        });
+        conn.on('close', function(){ if (!ended) finish('השיתוף הסתיים.'); });
+      });
+      peer.on('call', function(c){
+        call = c;
+        call.answer();
+        call.on('stream', function(s){
+          $('viewerVideo').srcObject = s;
+          hide($('viewerMsg'));
+          show($('viewerLive'));
+          s.getVideoTracks()[0].addEventListener('ended', function(){ finish('השיתוף הסתיים.'); });
+        });
+        call.on('close', function(){ finish('השיתוף הסתיים.'); });
+      });
+      peer.on('error', function(err){
+        if (err.type === 'peer-unavailable') finish('אין שיתוף פעיל בקישור הזה. בקש מהמשתף להתחיל שיתוף ולשלוח קישור חדש.', 'err');
+        else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') finish('אין חיבור לשרת התיווך. בדוק את החיבור לאינטרנט.', 'err');
+        else console.warn('peer error', err);
+      });
+    }
+
+    function finish(txt, cls){
+      if (ended) return;
+      ended = true;
+      hide($('viewerLive'));
+      $('viewerVideo').srcObject = null;
+      msg(txt, cls || '');
+      try { if (peer) peer.destroy(); } catch(_){}
+      peer = null;
+    }
+  }
+})();
+</script>
+</body>
+</html>
