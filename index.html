@@ -53,6 +53,8 @@
   input.text{width:100%;border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;font-size:16px;font-family:inherit;background:#fff;color:var(--text)}
   .hidden{display:none !important}
   .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+  .diag{font-size:12px;color:var(--muted);background:#fff;border:1px dashed var(--line);border-radius:var(--r);padding:8px 10px;margin-top:16px;line-height:1.6;word-break:break-word}
+  #btnRetry{margin-bottom:12px}
   footer{color:var(--muted);font-size:13px;margin-top:24px;border-top:1px solid var(--line);padding-top:12px}
   @media (max-width:480px){ .wrap{padding:16px 12px 40px} header{flex-direction:column;gap:2px} }
 </style>
@@ -117,6 +119,7 @@
   </div>
 
   <div id="viewerMsg" class="msg hidden"></div>
+  <button class="btn hidden" id="btnRetry">נסה שוב</button>
 
   <div class="card hidden" id="viewerLive">
     <div class="topbar">
@@ -128,6 +131,8 @@
 
 </section>
 
+<div id="diag" class="diag hidden"></div>
+
 <footer>
   הצופה רואה בלבד ואינו יכול לשלוט במחשב. הווידאו עובר מוצפן ישירות בין המחשבים.
 </footer>
@@ -138,6 +143,7 @@
 (function(){
   'use strict';
 
+  var VERSION = '2';
   var PREFIX = 'ss-';
   var ICE = { iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -163,14 +169,66 @@
     return new Peer(id, { config: ICE, debug: 1 });
   }
 
+  /* ================= DIAGNOSTICS ================= */
+  // One small line at the bottom of the page that shows how far the connection got.
+  var diag;
+  function resetDiag(){
+    diag = { server: '—', signal: '—', cands: { host: 0, srflx: 0, relay: 0 }, ice: '—', route: '', channel: '—', video: '—', note: '' };
+  }
+  resetDiag();
+  function renderDiag(){
+    var c = diag.cands;
+    var parts = [
+      'שרת תיווך: ' + diag.server,
+      'איתות: ' + diag.signal,
+      'נתיבים: מקומי ' + c.host + ', ציבורי ' + c.srflx + ', ממסר ' + c.relay,
+      'חיבור: ' + diag.ice + (diag.route ? ' (' + diag.route + ')' : ''),
+      'ערוץ: ' + diag.channel,
+      'וידאו: ' + diag.video
+    ];
+    if (diag.note) parts.push(diag.note);
+    var el = $('diag');
+    el.textContent = 'אבחון (גרסה ' + VERSION + ') · ' + parts.join(' | ');
+    show(el);
+  }
+  function setDiag(k, v){ diag[k] = v; renderDiag(); }
+
+  // Follow one WebRTC connection: count the routes it finds and report its state.
+  function watchPc(pc, key, onState){
+    if (!pc || pc.__ssWatched) return;
+    pc.__ssWatched = true;
+    pc.addEventListener('icecandidate', function(e){
+      if (key !== 'ice' || !e.candidate || !e.candidate.type) return;
+      var t = e.candidate.type === 'prflx' ? 'srflx' : e.candidate.type;
+      if (diag.cands[t] != null){ diag.cands[t]++; renderDiag(); }
+    });
+    pc.addEventListener('iceconnectionstatechange', function(){
+      var st = pc.iceConnectionState;
+      setDiag(key, st);
+      if (st === 'connected' || st === 'completed') readRoute(pc);
+      if (onState) onState(st);
+    });
+    setDiag(key, pc.iceConnectionState);
+  }
+  function readRoute(pc){
+    pc.getStats().then(function(stats){
+      var byId = {}, pair = null;
+      stats.forEach(function(r){ byId[r.id] = r; });
+      stats.forEach(function(r){ if (r.type === 'transport' && r.selectedCandidatePairId) pair = byId[r.selectedCandidatePairId]; });
+      if (!pair) stats.forEach(function(r){ if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) pair = r; });
+      var loc = pair && byId[pair.localCandidateId];
+      if (loc) setDiag('route', loc.candidateType === 'relay' ? 'דרך ממסר' : (loc.candidateType === 'host' ? 'ישיר מקומי' : 'ישיר'));
+    }).catch(function(){});
+  }
+
   var code = (location.hash || '').replace(/^#/, '').trim();
   if (/^[a-z0-9]{8,20}$/.test(code)) initViewer(code); else initHost();
 
   /* ================= HOST ================= */
   function initHost(){
     show($('host'));
-    var peer = null, stream = null;
-    var viewers = {}; // peerId -> {conn, call, name, approved, el}
+    var peer = null, stream = null, incoming = 0;
+    var viewers = {}; // peerId -> {conn, call, name, approved, open, at}
 
     $('btnStart').addEventListener('click', startShare);
     $('btnStop').addEventListener('click', stopShare);
@@ -202,10 +260,13 @@
       stream.getVideoTracks()[0].addEventListener('ended', stopShare);
       $('hostPreview').srcObject = stream;
 
+      resetDiag(); incoming = 0;
+      setDiag('server', 'מתחבר');
       var c = randomCode(10);
       peer = newPeer(PREFIX + c);
 
       peer.on('open', function(){
+        setDiag('server', 'מחובר');
         var link = location.origin + location.pathname + '#' + c;
         $('shareLink').value = link;
         $('btnWa').href = 'https://wa.me/?text=' + encodeURIComponent('קישור לצפייה במסך שלי: ' + link);
@@ -214,20 +275,48 @@
       });
 
       peer.on('connection', function(conn){
-        conn.on('data', function(msg){
-          if (!msg || msg.type !== 'hello') return;
+        incoming++;
+        setDiag('signal', 'בקשות נכנסות: ' + incoming);
+        watchPc(conn.peerConnection, 'ice', function(st){
+          var v = viewers[conn.peer];
+          if ((st === 'failed' || st === 'disconnected' || st === 'closed') && v && !v.open) gone();
+        });
+
+        // The name travels with the request itself, so the card shows up
+        // even before the direct channel between the two browsers is ready.
+        function register(nm){
           if (viewers[conn.peer]) return;
-          var name = String(msg.name || '').trim().slice(0, 40) || 'צופה ללא שם';
-          viewers[conn.peer] = { conn: conn, call: null, name: name, approved: false, at: new Date() };
+          var name = String(nm || '').trim().slice(0, 40) || 'צופה ללא שם';
+          viewers[conn.peer] = { conn: conn, call: null, name: name, approved: false, open: !!conn.open, at: new Date() };
           renderViewers();
           try { if (navigator.vibrate) navigator.vibrate(100); } catch(_){}
+        }
+        if (conn.metadata && conn.metadata.name) register(conn.metadata.name);
+
+        conn.on('open', function(){
+          setDiag('channel', 'פתוח');
+          if (viewers[conn.peer]){ viewers[conn.peer].open = true; renderViewers(); }
         });
-        conn.on('close', function(){ removeViewer(conn.peer); });
-        conn.on('error', function(){ removeViewer(conn.peer); });
+        conn.on('data', function(msg){
+          if (!msg || msg.type !== 'hello') return;
+          register(msg.name);
+          if (viewers[conn.peer] && !viewers[conn.peer].open){ viewers[conn.peer].open = true; renderViewers(); }
+        });
+        function gone(){
+          var v = viewers[conn.peer];
+          if (v && !v.open) setDiag('note', 'החיבור לצופה "' + v.name + '" לא נוצר');
+          removeViewer(conn.peer);
+        }
+        conn.on('close', gone);
+        conn.on('error', gone);
       });
 
-      peer.on('disconnected', function(){ if (peer && !peer.destroyed) peer.reconnect(); });
+      peer.on('disconnected', function(){
+        setDiag('server', 'מנותק, מתחבר מחדש');
+        if (peer && !peer.destroyed) peer.reconnect();
+      });
       peer.on('error', function(err){
+        setDiag('note', 'שגיאה: ' + err.type);
         if (err.type === 'unavailable-id') { hostError('תקלה ביצירת קוד, נסה שוב.'); cleanup(); return; }
         if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
           hostError('אין חיבור לשרת התיווך. בדוק את החיבור לאינטרנט ונסה שוב.'); cleanup(); return;
@@ -242,6 +331,7 @@
       try { v.conn.send({ type: 'approved' }); } catch(_){}
       v.call = peer.call(id, stream);
       if (v.call){
+        watchPc(v.call.peerConnection, 'video');
         v.call.on('close', function(){ removeViewer(id); });
         v.call.on('error', function(){ removeViewer(id); });
       }
@@ -288,9 +378,11 @@
         var el = document.createElement('div');
         el.className = 'viewer' + (v.approved ? '' : ' pending');
         var time = v.at.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+        var meta = v.approved ? 'צופה מ-' + time : 'מבקש לצפות · ' + time;
+        if (!v.open) meta += ' · החיבור אליו עדיין נבנה';
         el.innerHTML =
           '<div><div class="name">' + esc(v.name) + '</div>' +
-          '<div class="meta">' + (v.approved ? 'צופה מ-' + time : 'מבקש לצפות · ' + time) + '</div></div>' +
+          '<div class="meta">' + meta + '</div></div>' +
           '<div class="row"></div>';
         var btns = el.querySelector('.row');
         if (!v.approved){
@@ -308,14 +400,19 @@
       });
     }
 
-    function cleanup(){
-      if (stream){ stream.getTracks().forEach(function(t){ try { t.stop(); } catch(_){} }); stream = null; }
-      if (peer){ try { peer.destroy(); } catch(_){} peer = null; }
+    function resetUi(){
       viewers = {};
       $('hostPreview').srcObject = null;
       $('shareLink').value = '';
       hide($('hostActive')); show($('hostIdle'));
       $('btnStart').disabled = false;
+      setDiag('server', 'מנותק');
+    }
+
+    function cleanup(){
+      if (stream){ stream.getTracks().forEach(function(t){ try { t.stop(); } catch(_){} }); stream = null; }
+      if (peer){ try { peer.destroy(); } catch(_){} peer = null; }
+      resetUi();
     }
 
     function stopShare(){
@@ -329,11 +426,7 @@
       peer = null; stream = null;
       if (s) s.getTracks().forEach(function(t){ try { t.stop(); } catch(_){} });
       setTimeout(function(){ try { if (p) p.destroy(); } catch(_){} }, 300);
-      viewers = {};
-      $('hostPreview').srcObject = null;
-      $('shareLink').value = '';
-      hide($('hostActive')); show($('hostIdle'));
-      $('btnStart').disabled = false;
+      resetUi();
     }
   }
 
@@ -343,11 +436,16 @@
     $('subTitle').textContent = 'צפייה בלבד';
     var nameInp = $('viewerName');
     try { nameInp.value = localStorage.getItem('ss_name') || ''; } catch(_){}
-    var peer = null, call = null, ended = false;
+    var peer = null, call = null, ended = false, channelOpened = false, timer = null;
+
+    var BLOCKED = 'לא נוצר חיבור למחשב של המשתף. ייתכן שהרשת או תוכנת האבטחה חוסמות חיבור ישיר בין המחשבים.';
 
     function msg(txt, cls){ var m = $('viewerMsg'); m.textContent = txt; m.className = 'msg' + (cls ? ' ' + cls : ''); show(m); }
+    function arm(ms, fn){ clearTimeout(timer); timer = setTimeout(fn, ms); }
+    function disarm(){ clearTimeout(timer); timer = null; }
 
     $('btnJoin').addEventListener('click', join);
+    $('btnRetry').addEventListener('click', function(){ location.reload(); });
     nameInp.addEventListener('keydown', function(e){ if (e.key === 'Enter') join(); });
     $('btnFull').addEventListener('click', function(){
       var v = $('viewerVideo');
@@ -360,27 +458,56 @@
       try { localStorage.setItem('ss_name', name); } catch(_){}
       $('btnJoin').disabled = true;
       hide($('viewerJoin'));
-      msg('מתחבר...', 'warn');
+
+      msg('שלב 1 מתוך 3: מתחבר לשרת התיווך...', 'warn');
+      setDiag('server', 'מתחבר');
+      arm(12000, function(){ fail('אין תשובה משרת התיווך. ייתכן שהרשת חוסמת אותו.'); });
 
       peer = newPeer(undefined);
+
       peer.on('open', function(){
-        var conn = peer.connect(PREFIX + code, { reliable: true });
+        if (ended) return;
+        setDiag('server', 'מחובר');
+        msg('שלב 2 מתוך 3: מתחבר למחשב של המשתף...', 'warn');
+        var conn = peer.connect(PREFIX + code, { reliable: true, metadata: { name: name } });
+        setDiag('signal', 'הבקשה נשלחה');
+        watchPc(conn.peerConnection, 'ice', function(st){
+          if (st === 'failed' || (st === 'disconnected' && !channelOpened)) fail(BLOCKED);
+        });
+        arm(20000, function(){ fail(BLOCKED); });
+
         conn.on('open', function(){
+          channelOpened = true;
+          setDiag('channel', 'פתוח');
           conn.send({ type: 'hello', name: name });
-          msg('הבקשה נשלחה. ממתין לאישור המשתף...', 'warn');
+          disarm();
+          msg('שלב 3 מתוך 3: הבקשה הגיעה למשתף. ממתין לאישור שלו...', 'warn');
         });
         conn.on('data', function(m){
           if (!m) return;
-          if (m.type === 'approved') msg('אושר. מתחבר לווידאו...', 'warn');
+          if (m.type === 'approved'){
+            msg('אושר. מתחבר לווידאו...', 'warn');
+            arm(20000, function(){ fail('האישור התקבל אבל הווידאו לא הגיע. נסה שוב.'); });
+          }
           else if (m.type === 'denied') finish('הבקשה לצפות נדחתה.', 'err');
           else if (m.type === 'ended') finish('השיתוף הסתיים.');
         });
-        conn.on('close', function(){ if (!ended) finish('השיתוף הסתיים.'); });
+        conn.on('close', function(){
+          setDiag('channel', 'נסגר');
+          if (ended) return;
+          if (channelOpened) finish('השיתוף הסתיים.'); else fail(BLOCKED);
+        });
+        conn.on('error', function(e){ setDiag('note', 'שגיאת ערוץ: ' + (e && e.type || e)); });
       });
+
       peer.on('call', function(c){
         call = c;
         call.answer();
+        watchPc(call.peerConnection, 'video');
+        if (!timer) arm(20000, function(){ fail('האישור התקבל אבל הווידאו לא הגיע. נסה שוב.'); });
         call.on('stream', function(s){
+          disarm();
+          setDiag('video', 'מתקבל');
           $('viewerVideo').srcObject = s;
           hide($('viewerMsg'));
           show($('viewerLive'));
@@ -388,19 +515,26 @@
         });
         call.on('close', function(){ finish('השיתוף הסתיים.'); });
       });
+
+      peer.on('disconnected', function(){ if (!ended) setDiag('server', 'מנותק'); });
       peer.on('error', function(err){
+        setDiag('note', 'שגיאה: ' + err.type);
         if (err.type === 'peer-unavailable') finish('אין שיתוף פעיל בקישור הזה. בקש מהמשתף להתחיל שיתוף ולשלוח קישור חדש.', 'err');
-        else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') finish('אין חיבור לשרת התיווך. בדוק את החיבור לאינטרנט.', 'err');
+        else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') fail('אין חיבור לשרת התיווך. בדוק את החיבור לאינטרנט.');
         else console.warn('peer error', err);
       });
     }
 
-    function finish(txt, cls){
+    function fail(txt){ finish(txt, 'err', true); }
+
+    function finish(txt, cls, retry){
       if (ended) return;
       ended = true;
+      disarm();
       hide($('viewerLive'));
       $('viewerVideo').srcObject = null;
       msg(txt, cls || '');
+      if (retry) show($('btnRetry'));
       try { if (peer) peer.destroy(); } catch(_){}
       peer = null;
     }
